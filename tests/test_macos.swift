@@ -31,17 +31,32 @@ struct ShortcutTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let systemClipboardVersion = NSPasteboard.general.changeCount
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(suite))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.setString("Old clipboard content", forType: .string)
         let clipboard = TranscriptClipboard(defaults: defaults)
-        clipboard.append("First transcript — café")
-        clipboard.append("Second transcript\nwith another line")
+        clipboard.append("First transcript — café", copyingTo: pasteboard)
+        assert(pasteboard.string(forType: .string) == "First transcript — café")
+        clipboard.append("Second transcript\nwith another line", copyingTo: pasteboard)
+        assert(pasteboard.string(forType: .string) == "Second transcript\nwith another line")
+        pasteboard.clearContents()
+        pasteboard.setString("Copied from another app", forType: .string)
         let reopened = TranscriptClipboard(defaults: defaults)
         assert(reopened.transcripts == ["Second transcript\nwith another line", "First transcript — café"])
         assert(NSPasteboard.general.changeCount == systemClipboardVersion)
-        reopened.loadWindow()
+        reopened.showWindow(nil)
         assert(reopened.window?.title == "ASR clipboard")
+        assert(reopened.window?.isVisible == true)
+        reopened.close()
+        reopened.showWindow(nil)
+        assert(reopened.window?.isVisible == true)
+        reopened.close()
+        reopened.window?.orderFrontRegardless()
+        assert(reopened.window?.isVisible == true)
         reopened.clear()
         assert(TranscriptClipboard(defaults: defaults).transcripts.isEmpty)
         assert(NSPasteboard.general.changeCount == systemClipboardVersion)
-        print("Clipboard checks passed: history, reload, independent system clipboard, window, clear.")
+        reopened.close()
+        print("Clipboard checks passed: fresh paste contents, independent history, reload, show/reopen, clear.")
     }
 }

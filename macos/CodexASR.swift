@@ -69,11 +69,12 @@ final class TranscriptClipboard: NSWindowController {
         self.defaults = defaults
         transcripts = defaults.stringArray(forKey: Self.storageKey) ?? []
         super.init(window: nil)
+        createWindow()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func loadWindow() {
+    private func createWindow() {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
             styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: false
@@ -124,9 +125,11 @@ final class TranscriptClipboard: NSWindowController {
         refresh()
     }
 
-    func append(_ text: String) {
+    func append(_ text: String, copyingTo pasteboard: NSPasteboard) {
         transcripts.insert(text, at: 0)
         defaults.set(transcripts, forKey: Self.storageKey)
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
         refresh()
     }
 
@@ -407,13 +410,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     setStatus("No speech detected", symbol: "mic")
                     return
                 }
-                clipboard.append(text)
-                guard focused?.isCurrent == true else {
-                    setStatus("Saved to ASR clipboard — open it from the menu", symbol: "doc.on.clipboard")
+                clipboard.append(text, copyingTo: .general)
+                guard AXIsProcessTrusted() else {
+                    setStatus("Copied — enable Accessibility for automatic paste", symbol: "doc.on.clipboard")
+                    clipboard.window?.orderFrontRegardless()
                     return
                 }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                guard focused?.isCurrent == true else {
+                    setStatus("Copied — press Cmd+V to paste", symbol: "doc.on.clipboard")
+                    clipboard.window?.orderFrontRegardless()
+                    return
+                }
                 let source = CGEventSource(stateID: .privateState)
                 let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)!
                 let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)!

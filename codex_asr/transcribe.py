@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import platform
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,16 +141,22 @@ def transcribe(audio_path: Path, config: Config, timeout: float = 300) -> str:
         headers["ChatGPT-Account-Id"] = auth.account_id
 
     request = Request(config.endpoint, data=body, method="POST", headers=headers)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[-2000:]
-        if exc.code == 401:
-            detail = "ChatGPT login was rejected; run 'codex login' to refresh it"
-        raise RuntimeError(f"Codex transcription returned HTTP {exc.code}: {detail}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Could not reach Codex transcription: {exc.reason}") from exc
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.load(response)
+            break
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[-2000:]
+            exc.close()
+            if exc.code in (500, 502, 503, 504) and attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            if exc.code == 401:
+                detail = "ChatGPT login was rejected; run 'codex login' to refresh it"
+            raise RuntimeError(f"Codex transcription returned HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Could not reach Codex transcription: {exc.reason}") from exc
 
     text = payload.get("text")
     if not isinstance(text, str):

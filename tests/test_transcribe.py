@@ -7,11 +7,13 @@ import unittest
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from codex_asr.config import Config
 from codex_asr.transcribe import (
     _account_id_from_jwt,
     _multipart,
+    CodexAuth,
     load_codex_auth,
     transcribe,
 )
@@ -95,6 +97,39 @@ class MultipartTests(unittest.TestCase):
         self.assertEqual(request.get_header("Authorization"), "Bearer secret-token")
         self.assertEqual(request.get_header("Chatgpt-account-id"), "acct_test")
         self.assertEqual(request.get_header("Originator"), "Codex Desktop")
+
+
+class ServerErrorTests(unittest.TestCase):
+    def test_recovers_from_server_error_with_same_audio(self) -> None:
+        for status in (500, 502, 503, 504):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                audio = Path(directory) / "speech.wav"
+                audio.write_bytes(b"test-audio")
+                auth = CodexAuth("test-token", "test-account", Path(directory) / "auth.json")
+                error = HTTPError("https://example.invalid", status, "Server error", {}, BytesIO(b"failed"))
+                with patch("codex_asr.transcribe.load_codex_auth", return_value=auth), \
+                     patch("codex_asr.transcribe.urlopen", side_effect=[error, BytesIO(b'{"text":"hello"}')]) as request, \
+                     patch("codex_asr.transcribe.time.sleep") as sleep:
+                    self.assertEqual(transcribe(audio, Config()), "hello")
+                self.assertEqual(request.call_count, 2)
+                self.assertIs(request.call_args_list[0].args[0], request.call_args_list[1].args[0])
+                self.assertIn(b"test-audio", request.call_args.args[0].data)
+                sleep.assert_called_once_with(1)
+
+    def test_stops_after_three_server_failures_and_does_not_retry_client_errors(self) -> None:
+        for status, attempts in ((500, 3), (401, 1), (400, 1), (429, 1)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                audio = Path(directory) / "speech.wav"
+                audio.write_bytes(b"test-audio")
+                auth = CodexAuth("test-token", None, Path(directory) / "auth.json")
+                errors = [HTTPError("https://example.invalid", status, "Error", {}, BytesIO(b"failed")) for _ in range(attempts)]
+                with patch("codex_asr.transcribe.load_codex_auth", return_value=auth), \
+                     patch("codex_asr.transcribe.urlopen", side_effect=errors) as request, \
+                     patch("codex_asr.transcribe.time.sleep") as sleep:
+                    with self.assertRaisesRegex(RuntimeError, f"HTTP {status}"):
+                        transcribe(audio, Config())
+                self.assertEqual(request.call_count, attempts)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2] if attempts == 3 else [])
 
 
 if __name__ == "__main__":
