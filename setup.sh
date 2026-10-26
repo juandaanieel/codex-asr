@@ -2,6 +2,22 @@
 set -eu
 
 SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "$(uname -s)" = Darwin ]; then
+    BUILD_DIR=$(mktemp -d)
+    trap 'rm -rf "$BUILD_DIR"' EXIT
+    APP="$BUILD_DIR/Codex ASR.app"
+    mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$HOME/Applications"
+    xcrun swiftc -parse-as-library -O -target "$(uname -m)-apple-macosx14.0" \
+        "$SOURCE_DIR/macos/CodexASR.swift" -o "$APP/Contents/MacOS/CodexASR"
+    cp "$SOURCE_DIR/macos/Info.plist" "$APP/Contents/Info.plist"
+    ditto "$SOURCE_DIR/codex_asr" "$APP/Contents/Resources/codex_asr"
+    codesign --force --sign - "$APP"
+    ditto "$APP" "$HOME/Applications/Codex ASR.app"
+    printf '%s\n' "Installed $HOME/Applications/Codex ASR.app" \
+        "Open the app and enable Microphone and Accessibility from its menu." \
+        "Use Ctrl+Shift+Space: tap to start/stop, or hold to talk."
+    exit 0
+fi
 "$SOURCE_DIR/install.sh"
 "$HOME/.local/bin/codex-asr" doctor
 

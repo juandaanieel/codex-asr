@@ -1,6 +1,10 @@
 import unittest
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+if sys.platform != "linux":
+    raise unittest.SkipTest("IBus engine requires Linux")
 
 from codex_asr.engine import CodexASREngine, IBus
 
